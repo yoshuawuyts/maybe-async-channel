@@ -36,14 +36,14 @@ use helpers::*;
 use sender::SenderDataHelper;
 
 pub trait BoundedHelper<T>: MaybeAsync {
-    fn bounded(cap: usize) -> (Sender<Self, T>, Receiver<Self, T>)
+    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>)
     where
-        Sender<Self, T>: sender::SenderDataHelper<T>,
-        Receiver<Self, T>: receiver::ReceiverDataHelper;
+        Sender<T, Self>: sender::SenderDataHelper<T>,
+        Receiver<T, Self>: receiver::ReceiverDataHelper;
 }
 
 impl<T> BoundedHelper<T> for Async {
-    fn bounded(cap: usize) -> (Sender<Self, T>, Receiver<Self, T>) {
+    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
         let (sender, receiver) = async_channel::bounded(cap);
         let sender = Sender { sender };
         let receiver = Receiver { receiver };
@@ -52,7 +52,7 @@ impl<T> BoundedHelper<T> for Async {
 }
 
 impl<T> BoundedHelper<T> for NotAsync {
-    fn bounded(cap: usize) -> (Sender<Self, T>, Receiver<Self, T>) {
+    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
         let (sender, receiver) = crossbeam_channel::bounded(cap);
         let sender = Sender { sender };
         let receiver = Receiver { receiver };
@@ -63,10 +63,10 @@ impl<T> BoundedHelper<T> for NotAsync {
 /// Creates a bounded channel.
 ///
 /// The created channel has space to hold at most `cap` messages at a time.
-pub fn bounded<E: BoundedHelper<T>, T>(cap: usize) -> (Sender<E, T>, Receiver<E, T>)
+pub fn bounded<T, E: BoundedHelper<T>>(cap: usize) -> (Sender<T, E>, Receiver<T, E>)
 where
-    Sender<E, T>: sender::SenderDataHelper<T>,
-    Receiver<E, T>: receiver::ReceiverDataHelper,
+    Sender<T, E>: sender::SenderDataHelper<T>,
+    Receiver<T, E>: receiver::ReceiverDataHelper,
 {
     E::bounded(cap)
 }
@@ -74,23 +74,23 @@ where
 /// Creates an unbounded channel.
 ///
 /// The created channel can hold an unlimited number of messages.
-pub fn unbounded<E: MaybeAsync, T>() -> (Sender<E, T>, Receiver<E, T>)
+pub fn unbounded<T, E: MaybeAsync>() -> (Sender<T, E>, Receiver<T, E>)
 where
-    Sender<E, T>: sender::SenderDataHelper<T>,
-    Receiver<E, T>: receiver::ReceiverDataHelper,
+    Sender<T, E>: sender::SenderDataHelper<T>,
+    Receiver<T, E>: receiver::ReceiverDataHelper,
 {
     todo!();
 }
 
 /// The sending side of a channel.
-pub struct Sender<E: MaybeAsync, T>
+pub struct Sender<T, E: MaybeAsync = NotAsync>
 where
-    Sender<E, T>: sender::SenderDataHelper<T>,
+    Sender<T, E>: sender::SenderDataHelper<T>,
 {
     sender: <Self as sender::SenderDataHelper<T>>::Data,
 }
 
-impl<E: MaybeAsync, T> Sender<E, T>
+impl<E: MaybeAsync, T> Sender<T, E>
 where
     Self: sender::SenderDataHelper<T>,
 {
@@ -111,14 +111,14 @@ mod sender {
         fn send(&mut self, _: T) -> Self::Ret;
     }
 
-    impl<T> SenderDataHelper<T> for Sender<Async, T> {
+    impl<T> SenderDataHelper<T> for Sender<T, Async> {
         type Data = async_channel::Sender<T>;
         type Ret = impl std::future::Future<Output = ()>;
         fn send(&mut self, _: T) -> Self::Ret {
             async {}
         }
     }
-    impl<T> SenderDataHelper<T> for Sender<NotAsync, T> {
+    impl<T> SenderDataHelper<T> for Sender<T, NotAsync> {
         type Data = crossbeam_channel::Sender<T>;
         type Ret = ();
         fn send(&mut self, _: T) {}
@@ -126,9 +126,9 @@ mod sender {
 }
 
 /// The Receiving side of a channel.
-pub struct Receiver<E: MaybeAsync, T>
+pub struct Receiver<T, E: MaybeAsync = NotAsync>
 where
-    Receiver<E, T>: receiver::ReceiverDataHelper,
+    Receiver<T, E>: receiver::ReceiverDataHelper,
 {
     receiver: <Self as receiver::ReceiverDataHelper>::Data,
 }
@@ -142,11 +142,11 @@ pub(crate) mod receiver {
         type Data;
     }
 
-    impl<T> ReceiverDataHelper for Receiver<Async, T> {
+    impl<T> ReceiverDataHelper for Receiver<T, Async> {
         type Data = async_channel::Receiver<T>;
     }
 
-    impl<T> ReceiverDataHelper for Receiver<NotAsync, T> {
+    impl<T> ReceiverDataHelper for Receiver<T, NotAsync> {
         type Data = crossbeam_channel::Receiver<T>;
     }
 }
