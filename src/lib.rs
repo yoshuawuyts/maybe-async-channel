@@ -9,6 +9,7 @@
 #![forbid(unsafe_code, future_incompatible, rust_2018_idioms)]
 #![deny(nonstandard_style)]
 #![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
+#![feature(type_alias_impl_trait)]
 
 /// A crate of helpers to create "maybe-async" types and traits.
 ///
@@ -16,7 +17,7 @@
 /// desugaring, and should not surface to users of the feature.
 pub mod helpers {
     /// A bound on types which determines whether a type is async or not.
-    pub trait MaybeAsync {}
+    pub trait MaybeAsync: Sized {}
 
     impl MaybeAsync for NotAsync {}
 
@@ -34,10 +35,10 @@ pub mod helpers {
 use helpers::*;
 use sender::SenderDataHelper;
 
-pub trait BoundedHelper<T>: Sized + MaybeAsync {
+pub trait BoundedHelper<T>: MaybeAsync {
     fn bounded(cap: usize) -> (Sender<Self, T>, Receiver<Self, T>)
     where
-        Sender<Self, T>: sender::SenderDataHelper,
+        Sender<Self, T>: sender::SenderDataHelper<T>,
         Receiver<Self, T>: receiver::ReceiverDataHelper;
 }
 
@@ -64,7 +65,7 @@ impl<T> BoundedHelper<T> for NotAsync {
 /// The created channel has space to hold at most `cap` messages at a time.
 pub fn bounded<E: BoundedHelper<T>, T>(cap: usize) -> (Sender<E, T>, Receiver<E, T>)
 where
-    Sender<E, T>: sender::SenderDataHelper,
+    Sender<E, T>: sender::SenderDataHelper<T>,
     Receiver<E, T>: receiver::ReceiverDataHelper,
 {
     E::bounded(cap)
@@ -75,7 +76,7 @@ where
 /// The created channel can hold an unlimited number of messages.
 pub fn unbounded<E: MaybeAsync, T>() -> (Sender<E, T>, Receiver<E, T>)
 where
-    Sender<E, T>: sender::SenderDataHelper,
+    Sender<E, T>: sender::SenderDataHelper<T>,
     Receiver<E, T>: receiver::ReceiverDataHelper,
 {
     todo!();
@@ -84,25 +85,43 @@ where
 /// The sending side of a channel.
 pub struct Sender<E: MaybeAsync, T>
 where
-    Sender<E, T>: sender::SenderDataHelper,
+    Sender<E, T>: sender::SenderDataHelper<T>,
 {
-    sender: <Self as sender::SenderDataHelper>::Data,
+    sender: <Self as sender::SenderDataHelper<T>>::Data,
+}
+
+impl<E: MaybeAsync, T> Sender<E, T>
+where
+    Self: sender::SenderDataHelper<T>,
+{
+    pub async fn send(&mut self, _: T) {}
+    pub fn send2(&mut self, t: T) -> <Self as sender::SenderDataHelper<T>>::Ret {
+        <Self as SenderDataHelper<T>>::send(self, t)
+    }
 }
 
 mod sender {
     use super::*;
-
     /// Support trait for `Sender`.
-    pub trait SenderDataHelper {
+    pub trait SenderDataHelper<T> {
         /// What is the type we're returning?
         type Data;
+        /// What is the type `send` is returning
+        type Ret;
+        fn send(&mut self, _: T) -> Self::Ret;
     }
 
-    impl<T> SenderDataHelper for Sender<Async, T> {
+    impl<T> SenderDataHelper<T> for Sender<Async, T> {
         type Data = async_channel::Sender<T>;
+        type Ret = impl std::future::Future<Output = ()>;
+        fn send(&mut self, _: T) -> Self::Ret {
+            async {}
+        }
     }
-    impl<T> SenderDataHelper for Sender<NotAsync, T> {
+    impl<T> SenderDataHelper<T> for Sender<NotAsync, T> {
         type Data = crossbeam_channel::Sender<T>;
+        type Ret = ();
+        fn send(&mut self, _: T) {}
     }
 }
 
