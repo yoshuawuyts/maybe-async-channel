@@ -31,15 +31,13 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 #[test]
 fn sync_call() {
     let (mut sender, _receiver) = bounded::<usize, helpers::NotAsync>(10);
-    run_to_completion(sender.send(42));
-    sender.send2(42);
+    sender.send(42);
 }
 
 #[test]
 fn async_call() {
-    let _ = async {
+    run_to_completion(async {
         let (mut sender, _receiver) = bounded::<usize, helpers::Async>(42);
         sender.send(42).await;
-        sender.send2(42).await;
-    };
+    });
 }

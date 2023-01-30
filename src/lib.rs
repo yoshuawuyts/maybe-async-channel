@@ -35,6 +35,9 @@ pub mod helpers {
 use helpers::*;
 use sender::SenderDataHelper;
 
+pub(crate) mod bounded {
+    use super::*;
+
 pub trait BoundedHelper<T>: MaybeAsync {
     fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>)
     where
@@ -59,11 +62,12 @@ impl<T> BoundedHelper<T> for NotAsync {
         (sender, receiver)
     }
 }
+}
 
 /// Creates a bounded channel.
 ///
 /// The created channel has space to hold at most `cap` messages at a time.
-pub fn bounded<T, E: BoundedHelper<T>>(cap: usize) -> (Sender<T, E>, Receiver<T, E>)
+pub fn bounded<T, E: bounded::BoundedHelper<T>>(cap: usize) -> (Sender<T, E>, Receiver<T, E>)
 where
     Sender<T, E>: sender::SenderDataHelper<T>,
     Receiver<T, E>: receiver::ReceiverDataHelper,
@@ -94,8 +98,8 @@ impl<E: MaybeAsync, T> Sender<T, E>
 where
     Self: sender::SenderDataHelper<T>,
 {
-    pub async fn send(&mut self, _: T) {}
-    pub fn send2(&mut self, t: T) -> <Self as sender::SenderDataHelper<T>>::Ret {
+    /// Send an item on the channel
+    pub fn send(&mut self, t: T) -> <Self as sender::SenderDataHelper<T>>::Ret {
         <Self as SenderDataHelper<T>>::send(self, t)
     }
 }
