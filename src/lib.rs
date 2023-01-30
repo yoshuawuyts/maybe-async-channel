@@ -99,7 +99,7 @@ where
     Self: sender::SenderDataHelper<T>,
 {
     /// Send an item on the channel
-    pub fn send(&mut self, t: T) -> <Self as sender::SenderDataHelper<T>>::Ret {
+    pub fn send(&mut self, t: T) -> <Self as sender::SenderDataHelper<T>>::Ret<'_> {
         <Self as SenderDataHelper<T>>::send(self, t)
     }
 }
@@ -111,21 +111,23 @@ mod sender {
         /// What is the type we're returning?
         type Data;
         /// What is the type `send` is returning
-        type Ret;
-        fn send(&mut self, _: T) -> Self::Ret;
+        type Ret<'a>
+        where
+            Self: 'a;
+        fn send(&mut self, _: T) -> Self::Ret<'_>;
     }
 
     impl<T> SenderDataHelper<T> for Sender<T, Async> {
         type Data = async_channel::Sender<T>;
-        type Ret = impl std::future::Future<Output = Result<(), async_channel::SendError<T>>>;
-        fn send(&mut self, msg: T) -> Self::Ret {
+        type Ret<'a> = impl std::future::Future<Output = Result<(), async_channel::SendError<T>>> + 'a where Self: 'a;
+        fn send(&mut self, msg: T) -> Self::Ret<'_> {
             self.sender.send(msg)
         }
     }
     impl<T> SenderDataHelper<T> for Sender<T, NotAsync> {
         type Data = crossbeam_channel::Sender<T>;
-        type Ret = Result<(), crossbeam_channel::SendError<T>>;
-        fn send(&mut self, msg: T) -> Self::Ret {
+        type Ret<'a> = Result<(), crossbeam_channel::SendError<T>> where Self: 'a;
+        fn send(&mut self, msg: T) -> Self::Ret<'_> {
             self.sender.send(msg)
         }
     }
