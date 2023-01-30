@@ -16,18 +16,11 @@
 /// desugaring, and should not surface to users of the feature.
 pub mod helpers {
     /// A bound on types which determines whether a type is async or not.
-    pub trait MaybeAsync {
-        /// Are we async?
-        const IS_ASYNC: bool;
-    }
+    pub trait MaybeAsync {}
 
-    impl MaybeAsync for NotAsync {
-        const IS_ASYNC: bool = false;
-    }
+    impl MaybeAsync for NotAsync {}
 
-    impl MaybeAsync for Async {
-        const IS_ASYNC: bool = true;
-    }
+    impl MaybeAsync for Async {}
 
     /// Mark a type to be compiled in "!async mode"
     #[derive(Debug)]
