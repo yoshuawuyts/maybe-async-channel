@@ -38,30 +38,30 @@ use sender::SenderDataHelper;
 pub(crate) mod bounded {
     use super::*;
 
-pub trait BoundedHelper<T>: MaybeAsync {
-    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>)
-    where
-        Sender<T, Self>: sender::SenderDataHelper<T>,
-        Receiver<T, Self>: receiver::ReceiverDataHelper;
-}
-
-impl<T> BoundedHelper<T> for Async {
-    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
-        let (sender, receiver) = async_channel::bounded(cap);
-        let sender = Sender { sender };
-        let receiver = Receiver { receiver };
-        (sender, receiver)
+    pub trait BoundedHelper<T>: MaybeAsync {
+        fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>)
+        where
+            Sender<T, Self>: sender::SenderDataHelper<T>,
+            Receiver<T, Self>: receiver::ReceiverDataHelper;
     }
-}
 
-impl<T> BoundedHelper<T> for NotAsync {
-    fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
-        let (sender, receiver) = crossbeam_channel::bounded(cap);
-        let sender = Sender { sender };
-        let receiver = Receiver { receiver };
-        (sender, receiver)
+    impl<T> BoundedHelper<T> for Async {
+        fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
+            let (sender, receiver) = async_channel::bounded(cap);
+            let sender = Sender { sender };
+            let receiver = Receiver { receiver };
+            (sender, receiver)
+        }
     }
-}
+
+    impl<T> BoundedHelper<T> for NotAsync {
+        fn bounded(cap: usize) -> (Sender<T, Self>, Receiver<T, Self>) {
+            let (sender, receiver) = crossbeam_channel::bounded(cap);
+            let sender = Sender { sender };
+            let receiver = Receiver { receiver };
+            (sender, receiver)
+        }
+    }
 }
 
 /// Creates a bounded channel.
@@ -117,15 +117,17 @@ mod sender {
 
     impl<T> SenderDataHelper<T> for Sender<T, Async> {
         type Data = async_channel::Sender<T>;
-        type Ret = impl std::future::Future<Output = ()>;
-        fn send(&mut self, _: T) -> Self::Ret {
-            async {}
+        type Ret = impl std::future::Future<Output = Result<(), async_channel::SendError<T>>>;
+        fn send(&mut self, msg: T) -> Self::Ret {
+            self.sender.send(msg)
         }
     }
     impl<T> SenderDataHelper<T> for Sender<T, NotAsync> {
         type Data = crossbeam_channel::Sender<T>;
-        type Ret = ();
-        fn send(&mut self, _: T) {}
+        type Ret = Result<(), crossbeam_channel::SendError<T>>;
+        fn send(&mut self, msg: T) -> Self::Ret {
+            self.sender.send(msg)
+        }
     }
 }
 

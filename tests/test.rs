@@ -2,9 +2,9 @@
 
 use maybe_async_channel::*;
 use std::future::Future;
+use std::pin::pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
-use std::pin::pin;
 
 fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
     const WAKER: &Waker = {
