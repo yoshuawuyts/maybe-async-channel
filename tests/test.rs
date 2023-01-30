@@ -1,4 +1,4 @@
-#![feature(pin_macro, const_waker)]
+#![feature(const_waker)]
 
 use maybe_async_channel::*;
 use std::future::Future;
@@ -31,13 +31,13 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 #[test]
 fn sync_call() {
     let (mut sender, _receiver) = bounded::<usize, helpers::NotAsync>(10);
-    sender.send(42);
+    sender.send(42).unwrap();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
         let (mut sender, _receiver) = bounded::<usize, helpers::Async>(42);
-        sender.send(42).await;
+        sender.send(42).await.unwrap();
     });
 }

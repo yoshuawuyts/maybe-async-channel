@@ -1,14 +1,29 @@
-//! A channel which may or may not be async
+//! A channel which may or may not be async.
 //!
-//! # Examples
+//! This crate is an experimental desugaring of what actual "maybe-async" syntax
+//! might look like.
 //!
-//! ```
-//! // tbi
+//! # Syntactic Sugar
+//!
+//! We can imagine this crate would act as a desugaring for the following:
+//! ```rust
+//! pub ?async fn bounded(cap: usize) -> (?async Sender<T>, ?async Receiver<T>);
+//! pub ?async fn unbounded() -> (?async Sender<T>, ?async Receiver<T>);
+//!
+//! pub ?async struct Sender<T>;
+//! impl<T> ?async Sender<T> {
+//!     ?async fn send(&self, msg: T) -> Result<(), SendError>;
+//! }
+//!
+//! pub ?async struct Receiver<T>;
+//! impl<T> ?async Receiver<T> {
+//!     ?async fn recv(&self) -> Result<T, RecvError>;
+//! }
 //! ```
 
 #![forbid(unsafe_code, future_incompatible, rust_2018_idioms)]
 #![deny(nonstandard_style)]
-#![warn(missing_docs, missing_doc_code_examples, unreachable_pub)]
+#![warn(missing_docs, unreachable_pub)]
 #![feature(type_alias_impl_trait)]
 
 /// A crate of helpers to create "maybe-async" types and traits.
