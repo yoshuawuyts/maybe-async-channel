@@ -1,4 +1,4 @@
-#![feature(const_waker)]
+#![feature(const_waker, type_alias_impl_trait)]
 
 use maybe_async_proc_macro::maybe_async;
 use std::future::Future;
@@ -33,12 +33,12 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 
 #[test]
 fn sync_call() {
-    sleep::<false>();
+    sleep::<sleep::NotAsync>();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
-        sleep::<true>().await;
+        sleep::<sleep::Async>().await;
     });
 }
