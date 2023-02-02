@@ -52,26 +52,18 @@ pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
         #item
         pub mod #mod_name {
             use super::*;
-            pub(crate) trait Helper {
+            pub trait Helper {
                 type Ret;
                 fn act(#args) -> Self::Ret;
             }
 
-            /// Mark a type to be compiled in "!async mode"
-            #[derive(Debug)]
-            pub struct NotAsync;
-
-            /// Mark a type to be compiled in "async mode"
-            #[derive(Debug)]
-            pub struct Async;
-
-            impl Helper for Async {
+            impl Helper for maybe_async_std::Async {
                 type Ret = impl std::future::Future<Output = #ret>;
                 fn act(#args) -> Self::Ret {
                     async move #body
                 }
             }
-            impl Helper for NotAsync {
+            impl Helper for maybe_async_std::NotAsync {
                 type Ret = #ret;
                 fn act(#args) -> Self::Ret
                     #body

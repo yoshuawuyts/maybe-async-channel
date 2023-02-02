@@ -1,0 +1,9 @@
+[package]
+name = "maybe-async-std"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+maybe-async-proc-macro = { path = "../maybe-async-proc-macro" }

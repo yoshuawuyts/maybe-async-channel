@@ -1,13 +1,11 @@
-#![feature(const_waker, type_alias_impl_trait)]
+#![feature(const_waker)]
 
-use maybe_async_proc_macro::maybe_async;
 use std::future::Future;
 use std::pin::pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 
-#[maybe_async]
-async fn sleep() {}
+use maybe_async_std::{prelude::*, sleep};
 
 fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
     const WAKER: &Waker = {
@@ -33,12 +31,12 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 
 #[test]
 fn sync_call() {
-    sleep::<sleep::NotAsync>();
+    sleep::<NotAsync>();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
-        sleep::<sleep::Async>().await;
+        sleep::<Async>().await;
     });
 }
