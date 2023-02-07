@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::pin;
 use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::time::Duration;
 
 use maybe_async_proc_macro::maybe_async;
 use maybe_async_std::{prelude::*, sleep};
@@ -24,27 +25,30 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
         &unsafe { Waker::from_raw(RAW) }
     };
     let mut ctx = Context::from_waker(&WAKER);
-    match pin!(f).poll(&mut ctx) {
-        Poll::Ready(res) => res,
-        Poll::Pending => unreachable!(),
+    let mut f = pin!(f);
+    loop {
+        match f.as_mut().poll(&mut ctx) {
+            Poll::Ready(res) => return res,
+            Poll::Pending => continue,
+        }
     }
 }
 
 #[test]
 fn sync_call() {
-    sleep::<NotAsync>();
+    sleep::<NotAsync>(Duration::from_secs(1));
     sleep_and_print::<NotAsync>();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
-        sleep::<Async>().await;
+        sleep::<Async>(Duration::from_secs(1)).await;
         sleep_and_print::<Async>().await;
     });
 }
 
 #[maybe_async]
 async fn sleep_and_print() {
-    let _ = sleep().await;
+    let _ = sleep(Duration::from_secs(1)).await;
 }

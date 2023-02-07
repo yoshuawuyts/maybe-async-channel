@@ -3,8 +3,11 @@
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
-    parse, parse_macro_input, parse_quote, punctuated::Punctuated, token::Comma,
-    visit_mut::VisitMut, Expr, GenericParam, ItemFn, PathArguments, ReturnType,
+    parse, parse_macro_input, parse_quote,
+    punctuated::Punctuated,
+    token::Comma,
+    visit_mut::{visit_expr_mut, VisitMut},
+    Expr, GenericParam, ItemFn, PathArguments, ReturnType, Stmt,
 };
 
 #[proc_macro_attribute]
@@ -45,10 +48,11 @@ pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let body = parse_quote!({<ASYNC as #mod_name::Helper>::act(#call_args)});
 
-    let mut body = std::mem::replace(&mut *item.block, body);
+    let body = std::mem::replace(&mut *item.block, body);
 
-    let mut async_body = body.clone();
-    Asyncifyier.visit_block_mut(&mut async_body);
+    let (mut body, mut async_body) = split_async_if_expression(body);
+
+    Asyncifyier.visit_expr_mut(&mut async_body);
     Syncifyier.visit_block_mut(&mut body);
 
     let expanded = quote! {
@@ -63,7 +67,7 @@ pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
             impl Helper for maybe_async_std::Async {
                 type Ret = impl std::future::Future<Output = #ret>;
                 fn act(#args) -> Self::Ret {
-                    async move #async_body
+                    #async_body
                 }
             }
             impl Helper for maybe_async_std::NotAsync {
@@ -74,6 +78,21 @@ pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     };
     TokenStream::from(expanded)
+}
+
+fn split_async_if_expression(body: syn::Block) -> (syn::Block, syn::Expr) {
+    if let [Stmt::Expr(Expr::If(expr_if))] = &body.stmts[..] {
+        if let Expr::Path(path) = &*expr_if.cond {
+            if path.qself.is_none() && path.path.is_ident("ASYNC") {
+                let Expr::Block(sync) = &*expr_if.else_branch.as_ref().unwrap().1 else {
+                    panic!()
+                };
+                let async_expr = expr_if.then_branch.clone();
+                return (sync.block.clone(), parse_quote!(#async_expr));
+            }
+        }
+    }
+    (body.clone(), parse_quote!(async move #body))
 }
 
 struct Asyncifyier;
@@ -97,6 +116,7 @@ impl VisitMut for Asyncifyier {
                 todo!("emit a compile_error! invocation here so that we inform the user that they can only use await on call expressions in maybe async functions");
             }
         }
+        visit_expr_mut(self, e)
     }
 }
 
