@@ -6,7 +6,7 @@
 //! # Syntactic Sugar
 //!
 //! We can imagine this crate would act as a desugaring for the following:
-//! ```rust
+//! ```rust,ignore
 //! pub ?async fn bounded(cap: usize) -> (?async Sender<T>, ?async Receiver<T>);
 //! pub ?async fn unbounded() -> (?async Sender<T>, ?async Receiver<T>);
 //!
@@ -46,6 +46,8 @@ pub mod helpers {
     #[derive(Debug)]
     pub struct Async;
 }
+
+use std::future::Future;
 
 use helpers::*;
 use sender::SenderDataHelper;
@@ -171,5 +173,35 @@ pub(crate) mod receiver {
 
     impl<T> ReceiverDataHelper for Receiver<T, NotAsync> {
         type Data = crossbeam_channel::Receiver<T>;
+    }
+}
+
+/// An interface for dealing with iterators.
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub trait Iterator<ASYNC: MaybeAsync = NotAsync> {
+    type Item;
+    type MaybeFuture<'a>
+    where
+        Self: 'a;
+    fn next<'a>(&'a mut self) -> Self::MaybeFuture<'a>;
+}
+
+impl<T> Iterator<NotAsync> for Receiver<T, NotAsync> {
+    type Item = T;
+    type MaybeFuture<'a> = Option<T>
+    where
+        Self: 'a;
+    fn next<'a>(&'a mut self) -> Self::MaybeFuture<'a> {
+        self.receiver.recv().ok()
+    }
+}
+
+impl<T> Iterator<Async> for Receiver<T, Async> {
+    type Item = T;
+    type MaybeFuture<'a> = impl Future<Output = Option<T>> + 'a
+    where
+        Self: 'a;
+    fn next<'a>(&'a mut self) -> Self::MaybeFuture<'a> {
+        async move { self.receiver.recv().await.ok() }
     }
 }

@@ -41,3 +41,25 @@ fn async_call() {
         sender.send(42).await.unwrap();
     });
 }
+
+#[test]
+fn sync_recv() {
+    let (mut sender, mut receiver) = bounded::<usize, helpers::NotAsync>(10);
+    sender.send(42).unwrap();
+    drop(sender);
+    while let Some(elem) = receiver.next() {
+        assert_eq!(elem, 42);
+    }
+}
+
+#[test]
+fn async_recv() {
+    run_to_completion(async {
+        let (mut sender, mut receiver) = bounded::<usize, helpers::Async>(42);
+        sender.send(42).await.unwrap();
+        drop(sender);
+        while let Some(elem) = receiver.next().await {
+            assert_eq!(elem, 42);
+        }
+    });
+}
