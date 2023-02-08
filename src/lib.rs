@@ -28,11 +28,6 @@
 #![feature(specialization)]
 #![allow(incomplete_features)]
 
-/// Mark a type to be compiled in "async mode" if the boolean is `true`, otherwise
-/// the mode is regular non-async Rust.
-#[derive(Debug)]
-pub struct MaybeAsync<const ASYNC: bool>;
-
 use std::future::Future;
 
 use sender::SenderDataHelper;
@@ -169,7 +164,7 @@ pub(crate) mod receiver {
 
 /// An interface for dealing with iterators.
 #[must_use = "iterators are lazy and do nothing unless consumed"]
-pub trait Iterator<ASYNC = MaybeAsync<false>> {
+pub trait Iterator<const ASYNC: bool> {
     type Item;
     type MaybeFuture<'a>
     where
@@ -179,7 +174,7 @@ pub trait Iterator<ASYNC = MaybeAsync<false>> {
 
 // Actually only an impl for `MaybeAsync<false>`, as there are only two possible impls
 // and we wrote both of them. Workaround for https://github.com/rust-lang/rust/pull/104803
-impl<T, const ASYNC: bool> Iterator<MaybeAsync<ASYNC>> for Receiver<T, ASYNC> {
+impl<T, const ASYNC: bool> Iterator<ASYNC> for Receiver<T, ASYNC> {
     default type Item = ();
     default type MaybeFuture<'a> = ()
     where
@@ -189,7 +184,7 @@ impl<T, const ASYNC: bool> Iterator<MaybeAsync<ASYNC>> for Receiver<T, ASYNC> {
     }
 }
 
-impl<T> Iterator<MaybeAsync<false>> for Receiver<T, false> {
+impl<T> Iterator<false> for Receiver<T, false> {
     type Item = T;
     type MaybeFuture<'a> = Option<T>
     where
@@ -199,7 +194,7 @@ impl<T> Iterator<MaybeAsync<false>> for Receiver<T, false> {
     }
 }
 
-impl<T> Iterator<MaybeAsync<true>> for Receiver<T, true> {
+impl<T> Iterator<true> for Receiver<T, true> {
     type Item = T;
     type MaybeFuture<'a> = impl Future<Output = Option<T>> + 'a
     where
