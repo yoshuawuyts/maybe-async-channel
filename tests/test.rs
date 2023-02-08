@@ -30,21 +30,21 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 
 #[test]
 fn sync_call() {
-    let (mut sender, _receiver) = bounded::<usize, helpers::NotAsync>(10);
+    let (mut sender, _receiver) = bounded::<usize, false>(10);
     sender.send(42).unwrap();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
-        let (mut sender, _receiver) = bounded::<usize, helpers::Async>(42);
+        let (mut sender, _receiver) = bounded::<usize, true>(42);
         sender.send(42).await.unwrap();
     });
 }
 
 #[test]
 fn sync_recv() {
-    let (mut sender, mut receiver) = bounded::<usize, helpers::NotAsync>(10);
+    let (mut sender, mut receiver) = bounded::<usize, false>(10);
     sender.send(42).unwrap();
     drop(sender);
     while let Some(elem) = receiver.next() {
@@ -55,7 +55,7 @@ fn sync_recv() {
 #[test]
 fn async_recv() {
     run_to_completion(async {
-        let (mut sender, mut receiver) = bounded::<usize, helpers::Async>(42);
+        let (mut sender, mut receiver) = bounded::<usize, true>(42);
         sender.send(42).await.unwrap();
         drop(sender);
         while let Some(elem) = receiver.next().await {
