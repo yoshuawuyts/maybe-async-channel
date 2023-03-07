@@ -45,3 +45,21 @@ impl Future for Sleepy {
         }
     }
 }
+
+#[maybe_async]
+pub trait Iterator {
+    type Item;
+    async fn next(&mut self) -> Option<Item>;
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, None)
+    }
+}
+
+impl<T> Iterator<NotAsync> for Option<T> {
+    type Item = T;
+    type next_ret<'a> = Option<T> where Self: 'a;
+
+    fn next<'b>(&'b mut self) -> Option<T> {
+        self.take()
+    }
+}

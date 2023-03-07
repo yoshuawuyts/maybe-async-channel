@@ -7,12 +7,23 @@ use syn::{
     punctuated::Punctuated,
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
-    Expr, GenericParam, ItemFn, PathArguments, ReturnType, Stmt,
+    Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt, TypeParam,
 };
 
 #[proc_macro_attribute]
 pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut item = parse_macro_input!(item as ItemFn);
+    match parse_macro_input!(item as Item) {
+        Item::Fn(item) => maybe_async_fn(item),
+        Item::Trait(item) => maybe_async_trait(item),
+        item => quote!(compile_error!(
+            #item,
+            "`maybe_async` is only valid for functions and trait declarations"
+        ))
+        .into(),
+    }
+}
+
+fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
     assert!(item.sig.asyncness.is_some());
     item.sig.asyncness = None;
     item.sig.generics.lt_token.get_or_insert_default();
@@ -144,4 +155,59 @@ impl VisitMut for Syncifyier {
             *e = inner;
         }
     }
+}
+
+fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
+    item.generics.lt_token.get_or_insert_default();
+    item.generics.gt_token.get_or_insert_default();
+    let async_effect: TypeParam = parse_quote!(ASYNC);
+    item.generics
+        .params
+        .insert(0, GenericParam::Type(async_effect.clone()));
+
+    let mut new_items = vec![];
+
+    for assoc in &mut item.items {
+        match assoc {
+            syn::TraitItem::Method(method) if method.sig.asyncness.is_some() => {
+                method.sig.asyncness = None;
+                method.sig.generics.lt_token.get_or_insert_default();
+                method.sig.generics.gt_token.get_or_insert_default();
+                let ret_name = Ident::new(
+                    &format!("{}_ret", method.sig.ident),
+                    method.sig.ident.span(),
+                );
+                method
+                    .sig
+                    .generics
+                    .params
+                    .insert(0, GenericParam::Lifetime(parse_quote!('a)));
+                method.sig.output = parse_quote!(-> Self::#ret_name<'a>);
+                if let Some(def) = &method.default {
+                    return quote!(compile_error!(#def, "cannot specify `async` methods with default bodies in `maybe_async` traits")).into();
+                }
+                let ret_ty = parse_quote! {
+                    #[allow(non_camel_case_types)]
+                    type #ret_name<'a> where Self: 'a;
+                };
+                new_items.push(syn::TraitItem::Type(ret_ty));
+
+                if let Some(first) = method.sig.inputs.first_mut() {
+                    if let syn::FnArg::Receiver(recv) = first {
+                        if let Some((_, lifetime)) = &mut recv.reference {
+                            if let Some(lifetime) = lifetime {
+                                return quote!(compile_error!(#lifetime, "`self` parameter already has a named lifetime")).into();
+                            }
+                            *lifetime = Some(parse_quote!('a));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    item.items.extend(new_items);
+
+    quote! { #item }.into()
 }
