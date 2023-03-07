@@ -7,7 +7,7 @@ use syn::{
     punctuated::Punctuated,
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
-    Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt, TypeParam,
+    ConstParam, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
 };
 
 #[proc_macro_attribute]
@@ -29,11 +29,11 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
     item.sig.generics.lt_token.get_or_insert_default();
     item.sig.generics.gt_token.get_or_insert_default();
     let mod_name = &item.sig.ident;
-    let async_effect = parse_quote!(ASYNC: #mod_name::Helper);
+    let async_effect = parse_quote!(const ASYNC: bool);
     item.sig
         .generics
         .params
-        .insert(0, GenericParam::Type(async_effect));
+        .insert(0, GenericParam::Const(async_effect));
     let args = &item.sig.inputs;
     let call_args: Punctuated<_, Comma> = args
         .iter()
@@ -55,9 +55,9 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
         ReturnType::Default => quote!(()),
         ReturnType::Type(_, t) => quote!(#t),
     };
-    item.sig.output = parse_quote!(-> <ASYNC as #mod_name::Helper>::Ret);
+    item.sig.output = parse_quote!(-> <() as #mod_name::Helper<ASYNC>>::Ret);
 
-    let body = parse_quote!({<ASYNC as #mod_name::Helper>::act(#call_args)});
+    let body = parse_quote!({<() as #mod_name::Helper<ASYNC>>::act(#call_args)});
 
     let body = std::mem::replace(&mut *item.block, body);
 
@@ -70,21 +70,32 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
         #item
         pub mod #mod_name {
             use super::*;
-            pub trait Helper {
+            pub trait Helper<const ASYNC: bool> {
                 type Ret;
                 fn act(#args) -> Self::Ret;
             }
 
-            impl Helper for maybe_async_std::Async {
+            impl Helper<true> for () {
                 type Ret = impl std::future::Future<Output = #ret>;
                 fn act(#args) -> Self::Ret {
                     #async_body
                 }
             }
-            impl Helper for maybe_async_std::NotAsync {
+
+            impl Helper<false> for () {
                 type Ret = #ret;
                 fn act(#args) -> Self::Ret
                     #body
+            }
+
+            // Actually only an impl for `MaybeAsync<false>`, as there are only two possible impls
+            // and we wrote both of them. Workaround for https://github.com/rust-lang/rust/pull/104803
+            impl<const B: bool> Helper<B> for () {
+                default type Ret = ();
+                #[allow(unused_variables)]
+                default fn act(#args) -> Self::Ret {
+                    panic!("your trait solver is broken")
+                }
             }
         }
     };
@@ -115,7 +126,7 @@ impl VisitMut for Asyncifyier {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
                     if let PathArguments::None = last.arguments {
-                        let args: TokenStream = quote!(::<Self>).into();
+                        let args: TokenStream = quote!(::<true>).into();
                         last.arguments = PathArguments::AngleBracketed(parse(args).unwrap());
                     } else {
                         unimplemented!()
@@ -141,7 +152,7 @@ impl VisitMut for Syncifyier {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
                     if let PathArguments::None = last.arguments {
-                        let args: TokenStream = quote!(::<Self>).into();
+                        let args: TokenStream = quote!(::<false>).into();
                         last.arguments = PathArguments::AngleBracketed(parse(args).unwrap());
                     } else {
                         unimplemented!()
@@ -160,10 +171,10 @@ impl VisitMut for Syncifyier {
 fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
     item.generics.lt_token.get_or_insert_default();
     item.generics.gt_token.get_or_insert_default();
-    let async_effect: TypeParam = parse_quote!(ASYNC);
+    let async_effect: ConstParam = parse_quote!(const ASYNC: bool);
     item.generics
         .params
-        .insert(0, GenericParam::Type(async_effect.clone()));
+        .insert(0, GenericParam::Const(async_effect.clone()));
 
     let mut new_items = vec![];
 

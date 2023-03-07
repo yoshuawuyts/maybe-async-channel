@@ -1,20 +1,10 @@
 #![feature(type_alias_impl_trait)]
+#![feature(specialization)]
+#![allow(incomplete_features)]
 
 use std::future::Future;
 
 use maybe_async_proc_macro::maybe_async;
-
-/// Mark a type to be compiled in "async mode"
-#[derive(Debug)]
-pub struct Async;
-
-/// Mark a type to be compiled in "!async mode"
-#[derive(Debug)]
-pub struct NotAsync;
-
-pub mod prelude {
-    pub use super::{Async, NotAsync};
-}
 
 mod maybe_async_std {
     pub use super::*;
@@ -55,7 +45,7 @@ pub trait Iterator {
     }
 }
 
-impl<T> Iterator<NotAsync> for Option<T> {
+impl<T> Iterator<false> for Option<T> {
     type Item = T;
     type next_ret<'a> = Option<T> where Self: 'a;
 
