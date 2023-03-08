@@ -176,7 +176,7 @@ impl VisitMut for Syncifyier {
 fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
     item.generics.lt_token.get_or_insert_default();
     item.generics.gt_token.get_or_insert_default();
-    let async_effect: ConstParam = parse_quote!(const ASYNC: bool);
+    let async_effect: ConstParam = parse_quote!(const ASYNC: bool = false);
     item.generics
         .params
         .insert(0, GenericParam::Const(async_effect.clone()));

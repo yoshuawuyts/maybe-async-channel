@@ -46,11 +46,11 @@ pub trait Iterator {
     }
 }
 
-impl<T> Iterator<false> for Option<T> {
+impl<T> Iterator for Option<T> {
     type Item = T;
     type next_ret<'a> = Option<T> where Self: 'a;
 
-    fn next<'b>(&'b mut self) -> Option<T> {
+    fn next(&mut self) -> Option<T> {
         self.take()
     }
 }
