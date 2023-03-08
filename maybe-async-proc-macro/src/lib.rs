@@ -213,13 +213,19 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
                     .generics
                     .params
                     .insert(0, GenericParam::Lifetime(parse_quote!('a)));
-                method.sig.output = parse_quote!(-> Self::#ret_name<'a>);
+
+                let ret_type =
+                    std::mem::replace(&mut method.sig.output, parse_quote!(-> Self::#ret_name<'a>));
                 if let Some(def) = &method.default {
                     return quote_spanned!(def.span() => compile_error!("cannot specify `async` methods with default bodies in `maybe_async` traits");).into();
                 }
+                let ret_type = match ret_type {
+                    ReturnType::Default => parse_quote!(()),
+                    ReturnType::Type(_, ty) => *ty,
+                };
                 let ret_ty = parse_quote! {
                     #[allow(non_camel_case_types)]
-                    type #ret_name<'a> where Self: 'a;
+                    type #ret_name<'a> = #ret_type where Self: 'a;
                 };
                 new_items.push(syn::TraitItem::Type(ret_ty));
 

@@ -1,5 +1,6 @@
 #![feature(type_alias_impl_trait)]
 #![feature(specialization)]
+#![feature(associated_type_defaults)]
 #![allow(incomplete_features)]
 
 use std::future::Future;
@@ -40,7 +41,7 @@ impl Future for Sleepy {
 pub trait Iterator {
     type Item;
     #[maybe_async]
-    fn next(&mut self) -> Option<Item>;
+    fn next(&mut self) -> Option<Self::Item>;
     fn size_hint(&self) -> (usize, Option<usize>) {
         (0, None)
     }
@@ -48,7 +49,6 @@ pub trait Iterator {
 
 impl<T> Iterator for Option<T> {
     type Item = T;
-    type next_ret<'a> = Option<T> where Self: 'a;
 
     fn next(&mut self) -> Option<T> {
         self.take()
