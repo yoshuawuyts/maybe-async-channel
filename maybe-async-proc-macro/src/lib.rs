@@ -185,8 +185,23 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
 
     for assoc in &mut item.items {
         match assoc {
-            syn::TraitItem::Method(method) if method.sig.asyncness.is_some() => {
-                method.sig.asyncness = None;
+            syn::TraitItem::Method(method) => {
+                // FIXME: use `drain_filter` when that becomes stable
+                let pos = method
+                    .attrs
+                    .iter()
+                    .position(|attr| attr.path.is_ident("maybe_async"));
+                if let Some(pos) = pos {
+                    method.attrs.remove(pos);
+                } else {
+                    continue;
+                }
+                if let Some(asyncness) = method.sig.asyncness {
+                    return quote_spanned! {asyncness.span => compile_error!(
+                        "maybe_async methods can't also be `async`"
+                    );}
+                    .into();
+                }
                 method.sig.generics.lt_token.get_or_insert_default();
                 method.sig.generics.gt_token.get_or_insert_default();
                 let ret_name = Ident::new(
