@@ -51,6 +51,6 @@ fn async_call() {
 }
 
 #[maybe_async]
-async fn sleep_and_print() {
+fn sleep_and_print() {
     let _ = sleep(Duration::from_secs(1)).await;
 }

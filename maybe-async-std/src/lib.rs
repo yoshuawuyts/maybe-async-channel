@@ -11,7 +11,7 @@ mod maybe_async_std {
 }
 
 #[maybe_async]
-pub async fn sleep(dur: std::time::Duration) {
+pub fn sleep(dur: std::time::Duration) {
     if ASYNC {
         Sleepy(std::time::Instant::now() + dur)
     } else {

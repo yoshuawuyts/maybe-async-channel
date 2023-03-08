@@ -1,10 +1,11 @@
 #![feature(option_get_or_insert_default)]
 
 use proc_macro::TokenStream;
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{
     parse, parse_macro_input, parse_quote,
     punctuated::Punctuated,
+    spanned::Spanned,
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
     ConstParam, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
@@ -24,8 +25,12 @@ pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
-    assert!(item.sig.asyncness.is_some());
-    item.sig.asyncness = None;
+    if let Some(asyncness) = item.sig.asyncness {
+        return quote_spanned! {asyncness.span => compile_error!(
+            "maybe_async functions can't also be `async`"
+        );}
+        .into();
+    }
     item.sig.generics.lt_token.get_or_insert_default();
     item.sig.generics.gt_token.get_or_insert_default();
     let mod_name = &item.sig.ident;
@@ -195,7 +200,7 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
                     .insert(0, GenericParam::Lifetime(parse_quote!('a)));
                 method.sig.output = parse_quote!(-> Self::#ret_name<'a>);
                 if let Some(def) = &method.default {
-                    return quote!(compile_error!(#def, "cannot specify `async` methods with default bodies in `maybe_async` traits")).into();
+                    return quote_spanned!(def.span() => compile_error!("cannot specify `async` methods with default bodies in `maybe_async` traits");).into();
                 }
                 let ret_ty = parse_quote! {
                     #[allow(non_camel_case_types)]
@@ -207,7 +212,7 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
                     if let syn::FnArg::Receiver(recv) = first {
                         if let Some((_, lifetime)) = &mut recv.reference {
                             if let Some(lifetime) = lifetime {
-                                return quote!(compile_error!(#lifetime, "`self` parameter already has a named lifetime")).into();
+                                return quote_spanned!(lifetime.span() => compile_error!("`self` parameter already has a named lifetime");).into();
                             }
                             *lifetime = Some(parse_quote!('a));
                         }
