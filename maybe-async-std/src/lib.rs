@@ -2,12 +2,42 @@
 #![feature(specialization)]
 #![feature(associated_type_defaults)]
 #![feature(async_iterator)]
+#![feature(adt_const_params)]
 #![allow(incomplete_features)]
 
 use std::{async_iter::AsyncIterator, future::Future};
 
 use maybe_async_proc_macro::maybe;
 
+pub mod prelude {
+    #[derive(PartialEq, Eq)]
+    pub struct Effects {
+        pub async_: bool,
+        pub try_: bool,
+    }
+
+    impl Effects {
+        pub const ASYNC: Self = Self {
+            async_: true,
+            try_: false,
+        };
+        pub const TRY: Self = Self {
+            async_: true,
+            try_: false,
+        };
+        pub const NONE: Self = Self {
+            async_: false,
+            try_: false,
+        };
+        pub const ALL: Self = Self {
+            async_: true,
+            try_: true,
+        };
+    }
+}
+
+#[cfg(not(doc))]
+// Hack module to allow the use of the proc macro within the crate itself
 mod maybe_async_std {
     pub use super::*;
 }

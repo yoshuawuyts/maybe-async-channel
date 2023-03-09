@@ -1,9 +1,8 @@
 #![feature(option_get_or_insert_default)]
 
-use std::collections::HashSet;
-
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
+use proc_macro2::Span;
+use quote::{quote, quote_spanned, ToTokens};
 use syn::{
     parse,
     parse::{Parse, ParseStream},
@@ -16,20 +15,50 @@ use syn::{
     Token,
 };
 
-#[derive(Hash, PartialEq, Eq, Debug)]
-enum Keyword {
+#[derive(PartialEq, Eq, Debug, PartialOrd, Ord)]
+enum KeywordKind {
     Async,
     Try,
 }
+
+#[derive(Debug)]
+struct Keyword {
+    span: Span,
+    kind: KeywordKind,
+}
+
+impl Eq for Keyword {}
+impl PartialEq for Keyword {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
+impl Ord for Keyword {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.kind.cmp(&other.kind)
+    }
+}
+impl PartialOrd for Keyword {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.kind.partial_cmp(&other.kind)
+    }
+}
+
 impl Parse for Keyword {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let lookahead = input.lookahead1();
         if lookahead.peek(Token![async]) {
-            input.parse::<Token![async]>()?;
-            Ok(Self::Async)
+            let tok = input.parse::<Token![async]>()?;
+            Ok(Self {
+                span: tok.span,
+                kind: KeywordKind::Async,
+            })
         } else if lookahead.peek(Token![try]) {
-            input.parse::<Token![try]>()?;
-            Ok(Self::Try)
+            let tok = input.parse::<Token![try]>()?;
+            Ok(Self {
+                span: tok.span,
+                kind: KeywordKind::Try,
+            })
         } else {
             Err(Error::new(
                 input.span(),
@@ -40,19 +69,40 @@ impl Parse for Keyword {
 }
 
 struct MyMacroInput {
-    keywords: HashSet<Keyword>,
+    keywords: Vec<Keyword>,
+    span: Span,
+}
+
+impl ToTokens for MyMacroInput {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let keywords = self.keywords.iter();
+        quote_spanned!(self.span => #(#keywords),*).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for Keyword {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        match self.kind {
+            KeywordKind::Async => quote_spanned!(self.span => async),
+            KeywordKind::Try => quote_spanned!(self.span => try),
+        }
+        .to_tokens(tokens)
+    }
 }
 
 impl Parse for MyMacroInput {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut keywords = HashSet::new();
+        let span = input.span();
+        let mut keywords = Vec::new();
         loop {
             let kw: Keyword = input.parse()?;
-            if !keywords.insert(kw) {
+            if keywords.contains(&kw) {
                 return Err(Error::new(input.span(), "duplicate keyword"));
             }
+            keywords.push(kw);
             if input.is_empty() {
-                return Ok(Self { keywords });
+                keywords.sort();
+                return Ok(Self { keywords, span });
             }
             input.parse::<Token![,]>()?;
         }
@@ -61,21 +111,26 @@ impl Parse for MyMacroInput {
 
 #[proc_macro_attribute]
 pub fn maybe(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let kinds = parse_macro_input!(attr as MyMacroInput).keywords;
-    assert_eq!(kinds.len(), 1);
-    assert_eq!(*kinds.iter().next().unwrap(), Keyword::Async);
+    let kinds = parse_macro_input!(attr as MyMacroInput);
+    if kinds.keywords.len() != 1 {
+        return quote!(compile_error!(
+            #kinds,
+            "`maybe` currently only supports exactly one keyword"
+        );)
+        .into();
+    }
     match parse_macro_input!(item as Item) {
-        Item::Fn(item) => maybe_async_fn(item),
+        Item::Fn(item) => maybe_fn(item),
         Item::Trait(item) => maybe_async_trait(item),
         item => quote!(compile_error!(
             #item,
-            "`maybe_async` is only valid for functions and trait declarations"
+            "`maybe` is only valid for functions and trait declarations"
         );)
         .into(),
     }
 }
 
-fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
+fn maybe_fn(mut item: ItemFn) -> TokenStream {
     if let Some(asyncness) = item.sig.asyncness {
         return quote_spanned! {asyncness.span => compile_error!(
             "maybe_async functions can't also be `async`"
@@ -85,11 +140,11 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
     item.sig.generics.lt_token.get_or_insert_default();
     item.sig.generics.gt_token.get_or_insert_default();
     let mod_name = &item.sig.ident;
-    let async_effect = parse_quote!(const ASYNC: bool);
+    let effect_param = parse_quote!(const EFFECT: maybe_async_std::prelude::Effects);
     item.sig
         .generics
         .params
-        .insert(0, GenericParam::Const(async_effect));
+        .insert(0, GenericParam::Const(effect_param));
     let args = &item.sig.inputs;
     let call_args: Punctuated<_, Comma> = args
         .iter()
@@ -111,9 +166,9 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
         ReturnType::Default => quote!(()),
         ReturnType::Type(_, t) => quote!(#t),
     };
-    item.sig.output = parse_quote!(-> <() as #mod_name::Helper<ASYNC>>::Ret);
+    item.sig.output = parse_quote!(-> <() as #mod_name::Helper<EFFECT>>::Ret);
 
-    let body = parse_quote!({<() as #mod_name::Helper<ASYNC>>::act(#call_args)});
+    let body = parse_quote!({<() as #mod_name::Helper<EFFECT>>::act(#call_args)});
 
     let body = std::mem::replace(&mut *item.block, body);
 
@@ -126,27 +181,28 @@ fn maybe_async_fn(mut item: ItemFn) -> TokenStream {
         #item
         pub mod #mod_name {
             use super::*;
-            pub trait Helper<const ASYNC: bool> {
+            use maybe_async_std::prelude::Effects;
+            pub trait Helper<const EFFECT: Effects> {
                 type Ret;
                 fn act(#args) -> Self::Ret;
             }
 
-            impl Helper<true> for () {
+            impl Helper<{Effects::ASYNC}> for () {
                 type Ret = impl std::future::Future<Output = #ret>;
                 fn act(#args) -> Self::Ret {
                     #async_body
                 }
             }
 
-            impl Helper<false> for () {
+            impl Helper<{Effects::NONE}> for () {
                 type Ret = #ret;
                 fn act(#args) -> Self::Ret
                     #body
             }
 
-            // Actually only an impl for `MaybeAsync<false>`, as there are only two possible impls
+            // Actually only an impl for `MaybeAsync<NONE>`, as there are only two possible impls
             // and we wrote both of them. Workaround for https://github.com/rust-lang/rust/pull/104803
-            impl<const B: bool> Helper<B> for () {
+            impl<const EFFECT: Effects> Helper<EFFECT> for () {
                 default type Ret = ();
                 #[allow(unused_variables)]
                 default fn act(#args) -> Self::Ret {
@@ -182,7 +238,8 @@ impl VisitMut for Asyncifyier {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
                     if let PathArguments::None = last.arguments {
-                        let args: TokenStream = quote!(::<true>).into();
+                        let args: TokenStream =
+                            quote!(::<{maybe_async_std::prelude::Effects::ASYNC}>).into();
                         last.arguments = PathArguments::AngleBracketed(parse(args).unwrap());
                     } else {
                         unimplemented!()
@@ -208,7 +265,8 @@ impl VisitMut for Syncifyier {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
                     if let PathArguments::None = last.arguments {
-                        let args: TokenStream = quote!(::<false>).into();
+                        let args: TokenStream =
+                            quote!(::<{maybe_async_std::prelude::Effects::NONE}>).into();
                         last.arguments = PathArguments::AngleBracketed(parse(args).unwrap());
                     } else {
                         unimplemented!()
@@ -227,7 +285,7 @@ impl VisitMut for Syncifyier {
 fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
     item.generics.lt_token.get_or_insert_default();
     item.generics.gt_token.get_or_insert_default();
-    let async_effect: ConstParam = parse_quote!(const ASYNC: bool = false);
+    let async_effect: ConstParam = parse_quote!(const EFFECT: bool = false);
     item.generics
         .params
         .insert(0, GenericParam::Const(async_effect.clone()));
@@ -247,8 +305,8 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
                     let input: MyMacroInput = attr.parse_args().unwrap();
                     assert_eq!(input.keywords.len(), 1, "only supporting async for now");
                     assert_eq!(
-                        input.keywords.iter().next().unwrap(),
-                        &Keyword::Async,
+                        input.keywords.iter().next().unwrap().kind,
+                        KeywordKind::Async,
                         "only supporting async for now"
                     );
                 } else {

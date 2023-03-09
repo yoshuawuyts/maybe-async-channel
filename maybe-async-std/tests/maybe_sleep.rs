@@ -1,5 +1,6 @@
 #![feature(const_waker, type_alias_impl_trait)]
 #![feature(specialization)]
+#![feature(adt_const_params)]
 #![allow(incomplete_features)]
 
 use std::future::Future;
@@ -9,6 +10,7 @@ use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::time::Duration;
 
 use maybe_async_proc_macro::maybe;
+use maybe_async_std::prelude::*;
 use maybe_async_std::sleep;
 
 fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
@@ -38,15 +40,15 @@ fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
 
 #[test]
 fn sync_call() {
-    sleep::<false>(Duration::from_secs(1));
-    sleep_and_print::<false>();
+    sleep::<{ Effects::NONE }>(Duration::from_secs(1));
+    sleep_and_print::<{ Effects::NONE }>();
 }
 
 #[test]
 fn async_call() {
     run_to_completion(async {
-        sleep::<true>(Duration::from_secs(1)).await;
-        sleep_and_print::<true>().await;
+        sleep::<{ Effects::ASYNC }>(Duration::from_secs(1)).await;
+        sleep_and_print::<{ Effects::ASYNC }>().await;
     });
 }
 
