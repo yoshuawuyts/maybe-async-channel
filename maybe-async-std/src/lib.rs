@@ -3,6 +3,8 @@
 #![feature(associated_type_defaults)]
 #![feature(async_iterator)]
 #![feature(adt_const_params)]
+#![feature(try_trait_v2)]
+#![feature(allocator_api)]
 #![allow(incomplete_features)]
 
 use std::{async_iter::AsyncIterator, future::Future};
@@ -48,6 +50,15 @@ pub fn sleep(dur: std::time::Duration) {
         Sleepy(std::time::Instant::now() + dur)
     } else {
         std::thread::sleep(dur)
+    }
+}
+
+#[maybe(try(Result<Box<[u8; 1000]>, std::alloc::AllocError>))]
+pub fn mk_box() -> Box<[u8; 1000]> {
+    if TRY {
+        Box::try_new([0; 1000])
+    } else {
+        Box::new([0; 1000])
     }
 }
 

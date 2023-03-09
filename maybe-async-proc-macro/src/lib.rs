@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{
-    parse,
+    parenthesized, parse,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
@@ -12,13 +12,19 @@ use syn::{
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
     ConstParam, Error, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
-    Token,
+    Token, Type,
 };
 
-#[derive(PartialEq, Eq, Debug, PartialOrd, Ord)]
+#[derive(Debug, Eq)]
 enum KeywordKind {
     Async,
-    Try,
+    Try { result: Type },
+}
+
+impl PartialEq for KeywordKind {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
 }
 
 #[derive(Debug)]
@@ -33,14 +39,17 @@ impl PartialEq for Keyword {
         self.kind == other.kind
     }
 }
-impl Ord for Keyword {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.kind.cmp(&other.kind)
+
+impl Keyword {
+    fn identify(&self, name: &str) -> Ident {
+        Ident::new(name, self.span)
     }
-}
-impl PartialOrd for Keyword {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.kind.partial_cmp(&other.kind)
+
+    fn all_caps_name(&self) -> &'static str {
+        match self.kind {
+            KeywordKind::Async => "ASYNC",
+            KeywordKind::Try { .. } => "TRY",
+        }
     }
 }
 
@@ -55,9 +64,12 @@ impl Parse for Keyword {
             })
         } else if lookahead.peek(Token![try]) {
             let tok = input.parse::<Token![try]>()?;
+            let content;
+            parenthesized!(content in input);
+            let result = content.parse::<Type>()?;
             Ok(Self {
                 span: tok.span,
-                kind: KeywordKind::Try,
+                kind: KeywordKind::Try { result },
             })
         } else {
             Err(Error::new(
@@ -84,7 +96,7 @@ impl ToTokens for Keyword {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self.kind {
             KeywordKind::Async => quote_spanned!(self.span => async),
-            KeywordKind::Try => quote_spanned!(self.span => try),
+            KeywordKind::Try { .. } => quote_spanned!(self.span => try),
         }
         .to_tokens(tokens)
     }
@@ -101,7 +113,6 @@ impl Parse for MyMacroInput {
             }
             keywords.push(kw);
             if input.is_empty() {
-                keywords.sort();
                 return Ok(Self { keywords, span });
             }
             input.parse::<Token![,]>()?;
@@ -120,7 +131,7 @@ pub fn maybe(attr: TokenStream, item: TokenStream) -> TokenStream {
         .into();
     }
     match parse_macro_input!(item as Item) {
-        Item::Fn(item) => maybe_fn(item),
+        Item::Fn(item) => maybe_fn(item, kinds.keywords),
         Item::Trait(item) => maybe_async_trait(item),
         item => quote!(compile_error!(
             #item,
@@ -130,7 +141,7 @@ pub fn maybe(attr: TokenStream, item: TokenStream) -> TokenStream {
     }
 }
 
-fn maybe_fn(mut item: ItemFn) -> TokenStream {
+fn maybe_fn(mut item: ItemFn, kinds: Vec<Keyword>) -> TokenStream {
     if let Some(asyncness) = item.sig.asyncness {
         return quote_spanned! {asyncness.span => compile_error!(
             "maybe_async functions can't also be `async`"
@@ -144,7 +155,7 @@ fn maybe_fn(mut item: ItemFn) -> TokenStream {
     item.sig
         .generics
         .params
-        .insert(0, GenericParam::Const(effect_param));
+        .push(GenericParam::Const(effect_param));
     let args = &item.sig.inputs;
     let call_args: Punctuated<_, Comma> = args
         .iter()
@@ -172,10 +183,28 @@ fn maybe_fn(mut item: ItemFn) -> TokenStream {
 
     let body = std::mem::replace(&mut *item.block, body);
 
-    let (mut body, mut async_body) = split_async_if_expression(body);
+    let (mut body, effect_bodies) = split_if_expression(body, &kinds);
 
-    Asyncifyier.visit_expr_mut(&mut async_body);
-    Syncifyier.visit_block_mut(&mut body);
+    let effect_bodies = kinds.iter().zip(effect_bodies).map(|(effect, mut body)| {
+        Effectifier(&effect, &kinds).visit_expr_mut(&mut body);
+        let effect_name = effect.identify(effect.all_caps_name());
+        let ret = match &effect.kind {
+            KeywordKind::Async => quote!(impl std::future::Future<Output = #ret>),
+            KeywordKind::Try { result } => {
+                quote!(#result)
+            }
+        };
+        let effect = quote!(Effects::#effect_name);
+        quote! {
+            impl Helper<{#effect}> for () {
+                type Ret = #ret;
+                fn act(#args) -> Self::Ret {
+                    #body
+                }
+            }
+        }
+    });
+    DeEffectifier(&kinds).visit_block_mut(&mut body);
 
     let expanded = quote! {
         #item
@@ -187,12 +216,7 @@ fn maybe_fn(mut item: ItemFn) -> TokenStream {
                 fn act(#args) -> Self::Ret;
             }
 
-            impl Helper<{Effects::ASYNC}> for () {
-                type Ret = impl std::future::Future<Output = #ret>;
-                fn act(#args) -> Self::Ret {
-                    #async_body
-                }
-            }
+            #(#effect_bodies)*
 
             impl Helper<{Effects::NONE}> for () {
                 type Ret = #ret;
@@ -214,32 +238,52 @@ fn maybe_fn(mut item: ItemFn) -> TokenStream {
     TokenStream::from(expanded)
 }
 
-fn split_async_if_expression(body: syn::Block) -> (syn::Block, syn::Expr) {
+fn split_if_expression(body: syn::Block, effects: &[Keyword]) -> (syn::Block, Vec<syn::Expr>) {
+    let per_effect = |body| -> Vec<syn::Expr> {
+        effects
+            .iter()
+            .map(|effect| match effect.kind {
+                KeywordKind::Async => parse_quote!(async move #body),
+                KeywordKind::Try { .. } => parse_quote!(try #body),
+            })
+            .collect()
+    };
     if let [Stmt::Expr(Expr::If(expr_if))] = &body.stmts[..] {
         if let Expr::Path(path) = &*expr_if.cond {
-            if path.qself.is_none() && path.path.is_ident("ASYNC") {
-                let Expr::Block(sync) = &*expr_if.else_branch.as_ref().unwrap().1 else {
-                    panic!()
-                };
-                let async_expr = expr_if.then_branch.clone();
-                return (sync.block.clone(), parse_quote!(#async_expr));
+            if path.qself.is_none() {
+                if let Some(kw) = effects
+                    .iter()
+                    .find(|kw| path.path.is_ident(kw.all_caps_name()))
+                {
+                    let Expr::Block(sync) = &*expr_if.else_branch.as_ref().unwrap().1 else {
+                        panic!()
+                    };
+                    let effect_expr = expr_if.then_branch.clone();
+                    let mut bodies = per_effect(sync.block.clone());
+                    for (effect, body) in effects.iter().zip(bodies.iter_mut()) {
+                        if effect == kw {
+                            *body = parse_quote!(#effect_expr);
+                        }
+                    }
+                    return (sync.block.clone(), bodies);
+                }
             }
         }
     }
-    (body.clone(), parse_quote!(async move #body))
+    (body.clone(), per_effect(body))
 }
 
-struct Asyncifyier;
+struct Effectifier<'a>(&'a Keyword, &'a [Keyword]);
 
-impl VisitMut for Asyncifyier {
+impl VisitMut for Effectifier<'_> {
     fn visit_expr_mut(&mut self, e: &mut Expr) {
-        if let Expr::Await(inner) = e {
-            if let Expr::Call(call) = &mut *inner.base {
+        let muta = |expr: &mut _, kind: Ident| {
+            if let Expr::Call(call) = expr {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
                     if let PathArguments::None = last.arguments {
                         let args: TokenStream =
-                            quote!(::<{maybe_async_std::prelude::Effects::ASYNC}>).into();
+                            quote!(::<{maybe_async_std::prelude::Effects::#kind}>).into();
                         last.arguments = PathArguments::AngleBracketed(parse(args).unwrap());
                     } else {
                         unimplemented!()
@@ -250,17 +294,31 @@ impl VisitMut for Asyncifyier {
             } else {
                 todo!("emit a compile_error! invocation here so that we inform the user that they can only use await on call expressions in maybe async functions");
             }
+        };
+        for kw in self.1 {
+            let kind = kw.identify(kw.all_caps_name());
+            match kw.kind {
+                KeywordKind::Async => {
+                    if let Expr::Await(inner) = e {
+                        muta(&mut *inner.base, kind);
+                    }
+                }
+                KeywordKind::Try { .. } => {
+                    if let Expr::Try(inner) = e {
+                        muta(&mut *inner.expr, kind)
+                    }
+                }
+            }
         }
         visit_expr_mut(self, e)
     }
 }
 
-struct Syncifyier;
+struct DeEffectifier<'a>(&'a [Keyword]);
 
-impl VisitMut for Syncifyier {
+impl VisitMut for DeEffectifier<'_> {
     fn visit_expr_mut(&mut self, e: &mut Expr) {
-        if let Expr::Await(inner) = e {
-            let mut inner = (*inner.base).clone();
+        let muta = |mut inner| {
             if let Expr::Call(call) = &mut inner {
                 if let Expr::Path(path) = &mut *call.func {
                     let last = path.path.segments.last_mut().unwrap();
@@ -277,7 +335,21 @@ impl VisitMut for Syncifyier {
             } else {
                 todo!("emit a compile_error! invocation here so that we inform the user that they can only use await on call expressions in maybe async functions");
             }
-            *e = inner;
+            inner
+        };
+        for kw in self.0 {
+            match kw.kind {
+                KeywordKind::Async => {
+                    if let Expr::Await(inner) = e {
+                        *e = muta((*inner.base).clone());
+                    }
+                }
+                KeywordKind::Try { .. } => {
+                    if let Expr::Try(inner) = e {
+                        *e = muta((*inner.expr).clone());
+                    }
+                }
+            }
         }
     }
 }
