@@ -1,25 +1,76 @@
 #![feature(option_get_or_insert_default)]
 
+use std::collections::HashSet;
+
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{
-    parse, parse_macro_input, parse_quote,
+    parse,
+    parse::{Parse, ParseStream},
+    parse_macro_input, parse_quote,
     punctuated::Punctuated,
     spanned::Spanned,
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
-    ConstParam, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
+    ConstParam, Error, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
+    Token,
 };
 
+#[derive(Hash, PartialEq, Eq, Debug)]
+enum Keyword {
+    Async,
+    Try,
+}
+impl Parse for Keyword {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let lookahead = input.lookahead1();
+        if lookahead.peek(Token![async]) {
+            input.parse::<Token![async]>()?;
+            Ok(Self::Async)
+        } else if lookahead.peek(Token![try]) {
+            input.parse::<Token![try]>()?;
+            Ok(Self::Try)
+        } else {
+            Err(Error::new(
+                input.span(),
+                "unknown keyword, expected `async` or `try`",
+            ))
+        }
+    }
+}
+
+struct MyMacroInput {
+    keywords: HashSet<Keyword>,
+}
+
+impl Parse for MyMacroInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut keywords = HashSet::new();
+        loop {
+            let kw: Keyword = input.parse()?;
+            if !keywords.insert(kw) {
+                return Err(Error::new(input.span(), "duplicate keyword"));
+            }
+            if input.is_empty() {
+                return Ok(Self { keywords });
+            }
+            input.parse::<Token![,]>()?;
+        }
+    }
+}
+
 #[proc_macro_attribute]
-pub fn maybe_async(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn maybe(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let kinds = parse_macro_input!(attr as MyMacroInput).keywords;
+    assert_eq!(kinds.len(), 1);
+    assert_eq!(*kinds.iter().next().unwrap(), Keyword::Async);
     match parse_macro_input!(item as Item) {
         Item::Fn(item) => maybe_async_fn(item),
         Item::Trait(item) => maybe_async_trait(item),
         item => quote!(compile_error!(
             #item,
             "`maybe_async` is only valid for functions and trait declarations"
-        ))
+        );)
         .into(),
     }
 }
@@ -190,9 +241,16 @@ fn maybe_async_trait(mut item: syn::ItemTrait) -> TokenStream {
                 let pos = method
                     .attrs
                     .iter()
-                    .position(|attr| attr.path.is_ident("maybe_async"));
+                    .position(|attr| attr.path.is_ident("maybe"));
                 if let Some(pos) = pos {
-                    method.attrs.remove(pos);
+                    let attr = method.attrs.remove(pos);
+                    let input: MyMacroInput = attr.parse_args().unwrap();
+                    assert_eq!(input.keywords.len(), 1, "only supporting async for now");
+                    assert_eq!(
+                        input.keywords.iter().next().unwrap(),
+                        &Keyword::Async,
+                        "only supporting async for now"
+                    );
                 } else {
                     continue;
                 }

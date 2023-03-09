@@ -8,7 +8,7 @@ use std::ptr;
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
 use std::time::Duration;
 
-use maybe_async_proc_macro::maybe_async;
+use maybe_async_proc_macro::maybe;
 use maybe_async_std::sleep;
 
 fn run_to_completion<T>(f: impl Future<Output = T>) -> T {
@@ -50,7 +50,7 @@ fn async_call() {
     });
 }
 
-#[maybe_async]
+#[maybe(async)]
 fn sleep_and_print() {
     let _ = sleep(Duration::from_secs(1)).await;
 }

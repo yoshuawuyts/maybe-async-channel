@@ -6,13 +6,13 @@
 
 use std::{async_iter::AsyncIterator, future::Future};
 
-use maybe_async_proc_macro::maybe_async;
+use maybe_async_proc_macro::maybe;
 
 mod maybe_async_std {
     pub use super::*;
 }
 
-#[maybe_async]
+#[maybe(async)]
 pub fn sleep(dur: std::time::Duration) {
     if ASYNC {
         Sleepy(std::time::Instant::now() + dur)
@@ -38,10 +38,10 @@ impl Future for Sleepy {
     }
 }
 
-#[maybe_async]
+#[maybe(async)]
 pub trait Iterator {
     type Item;
-    #[maybe_async]
+    #[maybe(async)]
     fn next(&mut self) -> Option<Self::Item>;
     fn size_hint(&self) -> (usize, Option<usize>) {
         (0, None)
