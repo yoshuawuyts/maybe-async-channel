@@ -54,3 +54,17 @@ impl<T> Iterator for Option<T> {
         self.take()
     }
 }
+
+impl<T: Future> Iterator<true> for Option<T> {
+    type Item = <T as Future>::Output;
+    type next_ret<'a> = impl Future<Output = Option<<T as Future>::Output>> + 'a where T: 'a;
+
+    fn next<'a>(&'a mut self) -> Self::next_ret<'a> {
+        async move {
+            match self.take() {
+                Some(val) => Some(val.await),
+                None => None,
+            }
+        }
+    }
+}
