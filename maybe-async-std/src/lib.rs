@@ -1,9 +1,10 @@
 #![feature(type_alias_impl_trait)]
 #![feature(specialization)]
 #![feature(associated_type_defaults)]
+#![feature(async_iterator)]
 #![allow(incomplete_features)]
 
-use std::future::Future;
+use std::{async_iter::AsyncIterator, future::Future};
 
 use maybe_async_proc_macro::maybe_async;
 
@@ -55,16 +56,43 @@ impl<T> Iterator for Option<T> {
     }
 }
 
-impl<T: Future> Iterator<true> for Option<T> {
+struct OptionIter<T>(Option<T>);
+
+impl<T: Future> Iterator<true> for OptionIter<T> {
     type Item = <T as Future>::Output;
     type next_ret<'a> = impl Future<Output = Option<<T as Future>::Output>> + 'a where T: 'a;
 
     fn next<'a>(&'a mut self) -> Self::next_ret<'a> {
         async move {
-            match self.take() {
+            match self.0.take() {
                 Some(val) => Some(val.await),
                 None => None,
             }
         }
+    }
+}
+
+impl<I: AsyncIterator> Iterator<true> for I {
+    type Item = <I as AsyncIterator>::Item;
+    type next_ret<'a> = impl Future<Output = Option<Self::Item>> + 'a where I: 'a;
+
+    fn next<'a>(&'a mut self) -> Self::next_ret<'a> {
+        Fut(self)
+    }
+}
+
+struct Fut<'a, T: AsyncIterator>(&'a mut T);
+
+impl<'a, I: AsyncIterator> Unpin for Fut<'a, I> {}
+
+impl<'a, T: AsyncIterator> Future for Fut<'a, T> {
+    type Output = Option<<T as AsyncIterator>::Item>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let pinned = unsafe { self.map_unchecked_mut(|this| this.0) };
+        AsyncIterator::poll_next(pinned, cx)
     }
 }
