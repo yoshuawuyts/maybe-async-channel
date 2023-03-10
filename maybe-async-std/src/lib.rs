@@ -53,8 +53,8 @@ pub fn sleep(dur: std::time::Duration) {
     }
 }
 
-#[maybe(try(Result<Box<[u8; 1000]>, std::alloc::AllocError>))]
-pub fn mk_box() -> Box<[u8; 1000]> {
+#[maybe(try)]
+pub fn mk_box() -> Result<Box<[u8; 1000]>, std::alloc::AllocError> {
     if TRY {
         Box::try_new([0; 1000])
     } else {

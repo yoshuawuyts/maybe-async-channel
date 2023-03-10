@@ -26,7 +26,7 @@ fn try_call() {
     foomp().unwrap();
 }
 
-#[maybe(try(Result<(), std::alloc::AllocError>))]
-fn mk_box_and_print() {
+#[maybe(try)]
+fn mk_box_and_print() -> Result<(), std::alloc::AllocError> {
     let _ = mk_box()?;
 }

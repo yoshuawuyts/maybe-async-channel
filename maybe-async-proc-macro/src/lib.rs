@@ -4,7 +4,7 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{
-    parenthesized, parse,
+    parse,
     parse::{Parse, ParseStream},
     parse_macro_input, parse_quote,
     punctuated::Punctuated,
@@ -12,13 +12,13 @@ use syn::{
     token::Comma,
     visit_mut::{visit_expr_mut, VisitMut},
     ConstParam, Error, Expr, GenericParam, Ident, Item, ItemFn, PathArguments, ReturnType, Stmt,
-    Token, Type,
+    Token,
 };
 
 #[derive(Debug, Eq)]
 enum KeywordKind {
     Async,
-    Try { result: Type },
+    Try,
 }
 
 impl PartialEq for KeywordKind {
@@ -64,12 +64,9 @@ impl Parse for Keyword {
             })
         } else if lookahead.peek(Token![try]) {
             let tok = input.parse::<Token![try]>()?;
-            let content;
-            parenthesized!(content in input);
-            let result = content.parse::<Type>()?;
             Ok(Self {
                 span: tok.span,
-                kind: KeywordKind::Try { result },
+                kind: KeywordKind::Try,
             })
         } else {
             Err(Error::new(
@@ -190,9 +187,7 @@ fn maybe_fn(mut item: ItemFn, kinds: Vec<Keyword>) -> TokenStream {
         let effect_name = effect.identify(effect.all_caps_name());
         let ret = match &effect.kind {
             KeywordKind::Async => quote!(impl std::future::Future<Output = #ret>),
-            KeywordKind::Try { result } => {
-                quote!(#result)
-            }
+            KeywordKind::Try => quote!(#ret),
         };
         let effect = quote!(Effects::#effect_name);
         quote! {
@@ -205,6 +200,12 @@ fn maybe_fn(mut item: ItemFn, kinds: Vec<Keyword>) -> TokenStream {
         }
     });
     DeEffectifier(&kinds).visit_block_mut(&mut body);
+
+    assert_eq!(kinds.len(), 1);
+    let ret = match kinds[0].kind {
+        KeywordKind::Async => quote!(#ret),
+        KeywordKind::Try => quote!(<#ret as std::ops::Try>::Output),
+    };
 
     let expanded = quote! {
         #item
